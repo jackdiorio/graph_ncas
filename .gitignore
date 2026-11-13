@@ -1,0 +1,5 @@
+figures/
+models/
+__pycache__/
+legacy/
+diorio_venv/
