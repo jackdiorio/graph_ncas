@@ -3,3 +3,5 @@ models/
 __pycache__/
 legacy/
 diorio_venv/
+*.sh
+*.out
