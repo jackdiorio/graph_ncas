@@ -48,7 +48,9 @@ class Problem:
 
     graph      a graph_ncas.GraphData
     grid       side length of the grid the nodes sit on (for images)
-    target     the value each node should output, one number per node
+    target     the values each node should output, shape (nodes, channels):
+               one column for the binary smiley, three for an RGB picture.
+               The model is graded on the first `channels` state channels.
     make_seed  make_seed(batch) -> the starting states
     """
 
@@ -65,9 +67,12 @@ def seed_everything(seed):
 
 
 def per_sample_loss(state, target):
-    """Squared error of the output channel (channel 0) against the target,
-    averaged over the nodes: one number per sample."""
-    return ((state[..., 0] - target) ** 2).mean(dim=1)
+    """Squared error of the output channels (the first target.shape[-1]
+    channels of the state) against the target, averaged over the nodes and
+    the channels: one number per sample. For a one-channel target this is
+    the error of channel 0 alone."""
+    graded = target.shape[-1]
+    return ((state[..., :graded] - target) ** 2).mean(dim=(1, 2))
 
 
 @torch.no_grad()
@@ -534,9 +539,15 @@ def curve_rows(curves, loss_threshold):
 
 
 def output_image(problem, node_values):
-    """Per-node values (one number per node) -> a grid x grid image."""
+    """Per-node values, shape (nodes, channels) -> an image to show: a
+    grid x grid greyscale image for one channel, grid x grid x 3 colours for
+    three. Values are clipped to 0 to 1, because the output channels are
+    free to go outside that range and imshow cannot draw such colours."""
     values = torch.as_tensor(node_values)[None].to(problem.graph.device)
-    return setups.to_image(problem.graph, problem.grid, values)[0].cpu()
+    image = setups.to_image(problem.graph, problem.grid, values)[0].cpu()
+    if image.shape[-1] == 1:  # one channel: imshow wants a 2-D array
+        image = image[..., 0]
+    return image.clamp(0, 1)
 
 
 def edge_colormap():
@@ -616,14 +627,17 @@ def draw_network(ax, problem, edge_probs):
 
 def record_frames(problem, run, validation, steps):
     """One validation rollout of a single sample, recorded step by step.
-    Returns {"probs": (steps, messages), "outputs": (steps + 1, nodes)}.
-    probs[t] is what G produced from the state shown in outputs[t]."""
+    Returns {"probs": (steps, messages),
+             "outputs": (steps + 1, nodes, channels)}.
+    probs[t] is what G produced from the state shown in outputs[t]. Only
+    the graded channels are recorded: as many as the target has."""
+    graded = problem.target.shape[-1]
     probs = []
-    outputs = [problem.make_seed(1)[0, :, 0].cpu()]  # the starting output
+    outputs = [problem.make_seed(1)[0, :, :graded].cpu()]  # starting output
 
     def record(state, edge_probs, used):
         probs.append(edge_probs[0].cpu())
-        outputs.append(state[0, :, 0].cpu())
+        outputs.append(state[0, :, :graded].cpu())
 
     validation_rollout(problem, run.model, run.gate, steps, 1,
                        validation["seed"], record)

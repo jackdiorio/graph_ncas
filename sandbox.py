@@ -9,7 +9,7 @@ Every model in MODELS is trained (or, with LOAD_RUN, loaded from an earlier
 run) and then compared in figures and tables.
 
     graph_ncas.py  the model: GraphData, GraphNCA, EdgeGate
-    setups.py      this project's graphs, smiley target and starting state
+    setups.py      this project's graphs, targets and starting state
     training.py    loss, validation, training, checkpoints, figures
 
 Output (timestamped, one folder per run)
@@ -23,6 +23,7 @@ from functools import partial
 from pathlib import Path
 
 import torch
+from matplotlib.image import imread
 from tqdm import tqdm
 
 import graph_ncas as gn
@@ -36,10 +37,17 @@ import training as tr
 # Graph and NCA
 TOPOLOGY = "lattice"
 GRID = 32  # nodes sit at the GRID x GRID integer positions (i, j)
-NUM_CHANNELS = 8  # state values per node (channel 0 is graded)
+NUM_CHANNELS = 8  # state values per node (the first ones are graded)
 HIDDEN = 64  # neurons in the hidden layers of the NCA
 UPDATE_PROB = 0.5  # chance that a node updates at a given step
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Target: "smiley" is binary (graded on channel 0). "emoji" is an RGB picture
+# read from EMOJI_PATH (graded on channels 0, 1 and 2), e.g. a 128 x 128
+# emoji png from Growing NCAs. Transparent pixels become EMOJI_BACKGROUND.
+TARGET_NAME = "smiley"
+EMOJI_PATH = None  # path to the image, e.g. "emojis/lizard.png"
+EMOJI_BACKGROUND = (1.0, 1.0, 1.0)  # (red, green, blue) between 0 and 1
 
 # G, the network that decides which messages a cell listens to
 GATE_HIDDEN = 16  # neurons in G's hidden layer
@@ -108,7 +116,23 @@ CONFIG = {
 GRAPH = gn.GraphData(
     setups.make_lattice(GRID), setups.grid_offset(GRID), DEVICE
 )
-TARGET = setups.make_target(GRAPH, GRID)
+if TARGET_NAME == "smiley":
+    TARGET = setups.make_binary_target(GRAPH, GRID)
+elif TARGET_NAME == "emoji":
+    # imread gives a float array (height, width, 3 or 4) for a png and
+    # integers for a jpg; make_rgb_target understands both.
+    TARGET = setups.make_rgb_target(
+        GRAPH, GRID, imread(EMOJI_PATH), EMOJI_BACKGROUND
+    )
+else:
+    raise ValueError(f"TARGET_NAME must be 'smiley' or 'emoji', "
+                     f"not {TARGET_NAME!r}")
+
+# The target's channels are graded, so the state needs at least that many.
+if NUM_CHANNELS < TARGET.shape[-1]:
+    raise ValueError(f"NUM_CHANNELS = {NUM_CHANNELS}, but the {TARGET_NAME} "
+                     f"target has {TARGET.shape[-1]} channels")
+
 SEED = partial(setups.make_seed, GRAPH, GRID, NUM_CHANNELS)
 PROBLEM = tr.Problem(GRAPH, GRID, TARGET, SEED)
 
